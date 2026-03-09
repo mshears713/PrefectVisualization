@@ -1,5 +1,5 @@
 """
-graph/module_graph_visualizer.py — Module overview graph renderer (PRD 09 / PRD 10).
+graph/module_graph_visualizer.py — Module overview graph renderer (PRD 09 / PRD 10 / PRD 11).
 
 Overview
 --------
@@ -15,6 +15,7 @@ Design goals
 - Status communicated via both color and badge text.
 - Deterministic output: same module graph → same HTML structure.
 - PRD 10: clicking a module node navigates to its task graph HTML file.
+- PRD 11: rule-based summary banner above the graph; single title; clean formatting.
 
 Public API
 ----------
@@ -22,12 +23,16 @@ Public API
         Full pipeline: position nodes, build PyVis network, write HTML,
         return absolute output path. Injects click-to-navigate JS when
         task_graph_links are provided or auto-generated from module names.
+        Also injects a rule-based summary banner.
 
     make_module_node_label(node_data) -> str
         Format the visible in-node text (title, count, badge, duration).
 
     make_module_hover_text(node_data) -> str
         Format the HTML hover tooltip (input, output, duration).
+
+    build_pipeline_summary_banner(module_graph) -> str
+        Generate HTML for the rule-based summary banner (PRD 11).
 """
 
 from __future__ import annotations
@@ -128,11 +133,10 @@ def make_module_node_label(node_data: dict) -> str:
 
 
 def make_module_hover_text(node_data: dict, has_task_link: bool = False) -> str:
-    """Format the HTML hover tooltip for a module box.
+    """Format the hover tooltip for a module box.
 
-    Shows: module name, input summary, output summary, duration.
-    Branch flag and module ID are shown as supplementary details.
-    When has_task_link is True, adds a click-to-drill-down hint.
+    Shows: module name, input summary, output summary, duration, task count.
+    Uses plain text with newlines for reliable rendering across vis.js versions.
 
     Parameters
     ----------
@@ -144,7 +148,7 @@ def make_module_hover_text(node_data: dict, has_task_link: bool = False) -> str:
     Returns
     -------
     str
-        HTML-formatted string rendered by vis.js on hover.
+        Plain text string with newlines (no HTML tags for maximum compatibility).
     """
     module_name    = node_data.get("module_name", "?")
     input_summary  = node_data.get("input_summary",  "") or "—"
@@ -152,24 +156,21 @@ def make_module_hover_text(node_data: dict, has_task_link: bool = False) -> str:
     duration_ms    = node_data.get("total_duration_ms", 0.0)
     task_count     = node_data.get("task_count", 0)
     branch_flag    = node_data.get("branch_detected", False)
-    module_id      = node_data.get("module_id", "")
 
     parts = [
-        f"<b>{module_name}</b>",
-        "<hr/>",
-        f"<b>Input:</b>&nbsp;&nbsp;{input_summary}",
-        f"<b>Output:</b>&nbsp;{output_summary}",
-        f"<b>Duration:</b> {duration_ms:.0f} ms",
-        f"<b>Tasks:</b>&nbsp;&nbsp;{task_count}",
+        module_name,
+        "─" * 40,
+        f"📥 INPUT:    {input_summary}",
+        f"📤 OUTPUT:   {output_summary}",
+        f"⏱  DURATION: {duration_ms:.0f} ms",
+        f"📋 TASKS:    {task_count}",
     ]
     if branch_flag:
-        parts.append("<br>⚡ <i>Branch point inside this module</i>")
+        parts.append("⚡ Branch point inside this module")
     if has_task_link:
-        parts.append("<br><b style='color:#80cbc4'>&#128269; Click to open task graph</b>")
-    if module_id:
-        parts.append(f"<small style='color:#888'>id: {module_id}</small>")
+        parts.append("→ Click to open task graph")
 
-    return "<br>".join(parts)
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -322,8 +323,153 @@ def _inject_navigation_js(html_content: str, node_url_map: Dict[str, str]) -> st
 
 
 # ---------------------------------------------------------------------------
-# Main renderer
+# PRD 11 — Pipeline summary banner builders
 # ---------------------------------------------------------------------------
+
+def build_pipeline_summary_banner(module_graph: nx.DiGraph) -> str:
+    """Build a rule-based summary banner HTML for the module overview.
+
+    Displays high-level pipeline context:
+    - total module count
+    - total task count
+    - success/failure/warning counts
+    - total runtime
+    - one-line narrative of execution
+
+    Parameters
+    ----------
+    module_graph :
+        The module overview graph.
+
+    Returns
+    -------
+    str
+        HTML string for the banner, ready to inject into the page.
+    """
+    # Collect module and task stats.
+    module_nodes = list(module_graph.nodes(data=True))
+    total_modules = len(module_nodes)
+    total_tasks = 0
+    total_duration_ms = 0.0
+    success_count = 0
+    error_count = 0
+    warning_count = 0
+
+    for _node_id, node_data in module_nodes:
+        task_count = node_data.get("task_count", 0)
+        total_tasks += task_count
+        duration = node_data.get("total_duration_ms", 0.0)
+        total_duration_ms += duration
+        status = node_data.get("status", "unknown")
+        if status == "success":
+            success_count += 1
+        elif status == "error":
+            error_count += 1
+        elif status == "warning":
+            warning_count += 1
+
+    # Build narrative line based on module sequence and status.
+    ordered_modules = _sorted_module_nodes(module_graph)
+    module_names = [data.get("module_name", "?") for _id, data in ordered_modules]
+    narrative = " → ".join(module_names)
+
+    # Abbreviate if too long.
+    if len(narrative) > 100:
+        narrative = narrative[:97] + "…"
+
+    # Determine overall status emoji.
+    if error_count > 0:
+        status_emoji = "✖"
+        status_text = "Errors encountered"
+        status_color = "#f44336"
+    elif warning_count > 0:
+        status_emoji = "⚠"
+        status_text = "Warnings present"
+        status_color = "#ff9800"
+    else:
+        status_emoji = "✓"
+        status_text = "All modules succeeded"
+        status_color = "#4caf50"
+
+    # Build banner HTML.
+    banner_html = f"""
+<div style="
+  padding: 15px 20px;
+  background: #263238;
+  color: #eceff1;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-size: 13px;
+  line-height: 1.6;
+  border-bottom: 1px solid #455a64;
+">
+  <div style="display: flex; align-items: center; gap: 20px; margin-bottom: 8px;">
+    <span style="color: {status_color}; font-size: 16px; font-weight: bold;">{status_emoji} {status_text}</span>
+    <span style="color: #b0bec5;">
+      <b>{total_modules}</b> modules &nbsp;| &nbsp; 
+      <b>{total_tasks}</b> tasks &nbsp;| &nbsp; 
+      <b>{total_duration_ms:.0f}</b> ms total
+    </span>
+  </div>
+  <div style="color: #90a4ae; font-size: 12px; font-style: italic;">
+    {narrative}
+  </div>
+</div>
+"""
+    return banner_html
+
+
+def _inject_summary_banner(html_content: str, banner_html: str) -> str:
+    """Inject the summary banner into the HTML output.
+
+    Inserts before the mynetwork div.
+
+    Parameters
+    ----------
+    html_content :
+        Raw HTML from PyVis.
+    banner_html :
+        The banner HTML to inject.
+
+    Returns
+    -------
+    str
+        Modified HTML with banner injected.
+    """
+    target = '<div id="mynetwork"'
+    if target in html_content:
+        return html_content.replace(target, banner_html + "\n" + target, 1)
+    # Fallback: insert at the start of <body>.
+    if "<body>" in html_content:
+        return html_content.replace("<body>", "<body>\n" + banner_html, 1)
+    return banner_html + html_content
+
+
+# ---------------------------------------------------------------------------
+# PRD 11 — HTML cleanup and title normalization
+# ---------------------------------------------------------------------------
+
+def _clean_duplicate_titles(html_content: str) -> str:
+    """Remove PyVis-generated heading tags and keep only the primary title we set.
+
+    This ensures only one visible page title.
+
+    Parameters
+    ----------
+    html_content :
+        Raw HTML from PyVis.
+
+    Returns
+    -------
+    str
+        HTML with duplicate titles removed.
+    """
+    # PyVis generates an <h1> or similar from the "heading" parameter.
+    # We want to remove any extra title markup to ensure a single title only.
+    # Remove the auto-generated h1 or h2 that PyVis might create separately.
+    html_content = re.sub(r'<h1[^>]*>.*?</h1>', '', html_content, flags=re.DOTALL)
+    html_content = re.sub(r'<h2[^>]*>.*?</h2>', '', html_content, flags=re.DOTALL)
+    return html_content
+
 
 def render_module_graph_html(
     module_graph: nx.DiGraph,
@@ -339,6 +485,9 @@ def render_module_graph_html(
     PRD 10: clicking a module node navigates to its task graph HTML page.
     Navigation links are auto-generated from module names unless overridden
     via the ``task_graph_links`` parameter.
+
+    PRD 11: injects a rule-based summary banner above the graph; cleans up
+    titles to ensure a single visible heading.
 
     Parameters
     ----------
@@ -375,7 +524,7 @@ def render_module_graph_html(
         directed=True,
         cdn_resources="in_line",
         bgcolor="#f0f4f8",
-        heading="Module Overview — Phase 2 Pipeline",
+        heading="",  # Empty heading; we'll inject our own below
     )
     net.set_options(_MODULE_VIS_OPTIONS)
 
@@ -409,11 +558,40 @@ def render_module_graph_html(
         }
         n["widthConstraint"] = {"minimum": 190, "maximum": 220}
 
-    # --- Add pipeline edges ---
+    # --- Add pipeline edges with data flow labels ---
     for src, dst, _edge_data in module_graph.edges(data=True):
-        net.add_edge(src, dst, color={"color": "#546e7a", "inherit": False}, width=2)
+        # Get source module's output to show data flow.
+        src_node = module_graph.nodes[src]
+        output_label = src_node.get("output_summary", "")
+        if output_label and len(output_label) > 35:
+            output_label = output_label[:32] + "…"
+
+        edge_label = output_label if output_label else ""
+
+        net.add_edge(
+            src, dst,
+            color={"color": "#546e7a", "inherit": False},
+            width=2,
+            label=edge_label,
+            font={"size": 11, "color": "#546e7a", "align": "middle"},
+        )
 
     html_content = net.generate_html(local=False, notebook=False)
+
+    # PRD 11 — Clean up duplicate titles and add page title.
+    html_content = _clean_duplicate_titles(html_content)
+    # Inject our own clean title into <head> if needed.
+    if "<title>" not in html_content:
+        if "</head>" in html_content:
+            html_content = html_content.replace(
+                "</head>",
+                "<title>Module Overview — Phase 2 Pipeline</title>\n</head>",
+                1
+            )
+
+    # PRD 11 — Inject summary banner.
+    banner_html = build_pipeline_summary_banner(module_graph)
+    html_content = _inject_summary_banner(html_content, banner_html)
 
     # Inject click-navigation if we have any links to add.
     if node_url_map:

@@ -1,5 +1,5 @@
 """
-graph/task_graph_visualizer.py — Task graph renderer for Phase 2 (PRD 09 / PRD 10).
+graph/task_graph_visualizer.py — Task graph renderer for Phase 2 (PRD 09 / PRD 10 / PRD 11).
 
 Overview
 --------
@@ -21,6 +21,7 @@ Design goals
 - Deterministic output: same TaskGraphPayload → same HTML structure.
 - PRD 10: each task graph page includes a back-navigation bar linking to
   the module overview graph.
+- PRD 11: clean up page titles; improve navigation header clarity; stable formatting.
 
 Public API
 ----------
@@ -41,6 +42,7 @@ Public API
 from __future__ import annotations
 
 import os
+import re
 from typing import Dict, List, Optional, Tuple
 
 import networkx as nx
@@ -179,11 +181,10 @@ def make_task_node_label(node_data: dict) -> str:
 
 
 def make_task_hover_text(node_data: dict) -> str:
-    """Format the HTML hover tooltip for a task box.
+    """Format the hover tooltip for a task box.
 
-    Shows: task name, description, input summary, output summary, duration,
-    status. Error message is appended when present. Alternate path nodes
-    include a note that they were not executed.
+    Shows: task name, description, input, output, duration, status.
+    Uses plain text with newlines for reliable rendering.
 
     Parameters
     ----------
@@ -193,7 +194,7 @@ def make_task_hover_text(node_data: dict) -> str:
     Returns
     -------
     str
-        HTML-formatted string rendered by vis.js on hover.
+        Plain text string with newlines (no HTML tags for maximum compatibility).
     """
     task_name   = node_data.get("task_name", "?")
     description = node_data.get("task_description", "")
@@ -207,22 +208,20 @@ def make_task_hover_text(node_data: dict) -> str:
     badge = status_badge(status)
 
     parts = [
-        f"<b>{task_name}</b>",
-        f"<i>{description}</i>",
-        "<hr/>",
-        f"<b>Input:</b>&nbsp;&nbsp;{input_prev}",
-        f"<b>Output:</b>&nbsp;{output_prev}",
-        f"<b>Duration:</b> {duration_ms:.0f} ms",
-        f"<b>Status:</b>&nbsp;&nbsp;{badge}",
+        task_name,
+        description if description else "No description",
+        "─" * 40,
+        f"📥 INPUT:    {input_prev}",
+        f"📤 OUTPUT:   {output_prev}",
+        f"⏱  DURATION: {duration_ms:.0f} ms",
+        f"✓  STATUS:   {badge}",
     ]
     if error_msg:
-        parts.append(
-            f"<b style='color:#f44336'>Error:</b> {error_msg}"
-        )
+        parts.append(f"❌ ERROR: {error_msg}")
     if is_alt:
-        parts.append("<br><i style='color:#90a4ae'>This path was not taken in this run.</i>")
+        parts.append("ℹ This path was NOT taken in this run")
 
-    return "<br>".join(parts)
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +334,8 @@ def _inject_back_nav(
     The bar contains a "Back to Module Overview" link on the left and a
     breadcrumb label on the right showing the current module name.
 
+    PRD 11: improves visual hierarchy and clarity of the header.
+
     Parameters
     ----------
     html_content :
@@ -355,29 +356,45 @@ def _inject_back_nav(
     """
     nav_html = (
         '<div style="'
-        "padding: 10px 20px;"
+        "padding: 12px 20px;"
         "background: #37474f;"
-        "font-family: Arial, sans-serif;"
+        "font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;"
         "display: flex;"
         "align-items: center;"
-        "gap: 20px;"
+        "justify-content: space-between;"
+        "border-bottom: 1px solid #455a64;"
         '">'
-        f'<a href="{back_link}" style="'
+        '<a href="' + back_link + '" style="'
         "color: #80cbc4;"
         "text-decoration: none;"
-        "font-size: 14px;"
+        "font-size: 13px;"
         "font-weight: 600;"
-        '">'
+        "transition: color 0.2s;"
+        '"'
+        "onmouseover=\"this.style.color='#4dd0e1'\" "
+        "onmouseout=\"this.style.color='#80cbc4'\" "
+        ">"
         "&#8592; Back to Module Overview"
         "</a>"
-        '<span style="'
-        "color: #b0bec5;"
-        "font-size: 14px;"
+        '<div style="'
+        "display: flex;"
+        "align-items: center;"
+        "gap: 15px;"
         '">'
-        f"Task Graph &mdash; {module_name}"
-        f" &nbsp;|&nbsp; {task_count} task(s)"
-        f" &nbsp;|&nbsp; {total_duration_ms:.0f}&thinsp;ms total"
+        '<span style="'
+        "color: #eceff1;"
+        "font-size: 13px;"
+        "font-weight: 600;"
+        '">'
+        f"{module_name}"
         "</span>"
+        '<span style="'
+        "color: #90a4ae;"
+        "font-size: 12px;"
+        '">'
+        f"{task_count} task(s) &nbsp;|&nbsp; {total_duration_ms:.0f} ms"
+        "</span>"
+        "</div>"
         "</div>\n"
     )
 
@@ -392,8 +409,37 @@ def _inject_back_nav(
 
 
 # ---------------------------------------------------------------------------
-# Main renderer
+# PRD 11 — HTML cleanup and rendering improvements
 # ---------------------------------------------------------------------------
+
+def _clean_duplicate_titles(html_content: str, module_name: str) -> str:
+    """Remove PyVis-generated heading tags and ensure a single clean title.
+
+    Parameters
+    ----------
+    html_content :
+        Raw HTML from PyVis.
+    module_name :
+        The module name to use in the title.
+
+    Returns
+    -------
+    str
+        HTML with cleaned titles.
+    """
+    # Remove auto-generated h1 or h2 tags.
+    html_content = re.sub(r'<h1[^>]*>.*?</h1>', '', html_content, flags=re.DOTALL)
+    html_content = re.sub(r'<h2[^>]*>.*?</h2>', '', html_content, flags=re.DOTALL)
+    # Ensure a clean <title> tag.
+    if "<title>" not in html_content:
+        if "</head>" in html_content:
+            html_content = html_content.replace(
+                "</head>",
+                f"<title>Task Graph — {module_name}</title>\n</head>",
+                1
+            )
+    return html_content
+
 
 def render_task_graph_html(
     payload: TaskGraphPayload,
@@ -408,6 +454,8 @@ def render_task_graph_html(
 
     PRD 10: a navigation bar is injected above the graph with a back link
     to the module overview page.
+
+    PRD 11: cleans up page titles and ensures stable, single-title rendering.
 
     Parameters
     ----------
@@ -437,19 +485,14 @@ def render_task_graph_html(
     ctx        = payload.context
     positions  = _compute_task_positions(task_graph)
 
-    heading = (
-        f"Task Graph — {payload.module_name} "
-        f"({ctx.get('task_count', 0)} tasks, "
-        f"{ctx.get('total_duration_ms', 0.0):.0f} ms total)"
-    )
-
+    # Empty heading; we'll inject our own via the back nav bar.
     net = Network(
         height="500px",
         width="100%",
         directed=True,
         cdn_resources="in_line",
         bgcolor="#f0f4f8",
-        heading=heading,
+        heading="",
     )
     net.set_options(_TASK_VIS_OPTIONS)
 
@@ -490,7 +533,7 @@ def render_task_graph_html(
         n["font"]    = {"color": font_c, "size": 12, "face": "Arial"}
         n["widthConstraint"] = {"minimum": width, "maximum": width}
 
-    # --- Add edges with branch-aware styling ---
+    # --- Add edges with branch-aware styling and data flow labels ---
     for src, dst, edge_data in task_graph.edges(data=True):
         branch_taken = edge_data.get("branch_taken")
         # branch_taken is explicitly False only for alternate-path edges.
@@ -505,16 +548,29 @@ def render_task_graph_html(
             edge_width = 2.5
             dashes     = False
 
+        # Get source node's output to show data flow.
+        src_node = task_graph.nodes[src]
+        output_label = src_node.get("output_preview", "")
+        if output_label and len(output_label) > 30:
+            output_label = output_label[:27] + "…"
+
+        edge_label = output_label if output_label else ""
+
         net.add_edge(
             src, dst,
             color={"color": edge_color, "inherit": False},
             width=edge_width,
             dashes=dashes,
+            label=edge_label,
+            font={"size": 10, "color": edge_color, "align": "middle"},
         )
 
     html_content = net.generate_html(local=False, notebook=False)
 
-    # Inject back-navigation bar (PRD 10).
+    # PRD 11 — Clean up duplicate titles.
+    html_content = _clean_duplicate_titles(html_content, payload.module_name)
+
+    # Inject back-navigation bar (PRD 10/11).
     html_content = _inject_back_nav(
         html_content,
         back_link=back_link,
