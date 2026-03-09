@@ -1,0 +1,16 @@
+# Runtime Visual Debugger — Python dependencies
+#
+# Install with:
+#   pip install -r requirements.txt
+#
+# Start the server with:
+#   uvicorn api.server:app --host 0.0.0.0 --port 8000
+
+# --- API layer ---
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9   # required for FastAPI file upload (UploadFile)
+
+# --- Graph construction and visualization ---
+networkx>=3.3
+pyvis>=0.3.2
