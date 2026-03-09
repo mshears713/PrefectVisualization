@@ -92,27 +92,17 @@ def make_node_title(node_data: dict) -> str:
         An HTML-formatted multi-line tooltip.
     """
     lines = [
-        f"<b>{node_data.get('task_name', '?')}</b>",
-        f"<i>{node_data.get('task_description', '')}</i>",
-        "─────────────────────",
-        f"<b>Module:</b> {node_data.get('module_name', '—')}",
-        f"<b>Status:</b> {node_data.get('status', '—')}",
-        f"<b>Duration:</b> {node_data.get('duration_ms', 0):.4f} ms",
-        "─────────────────────",
-        f"<b>Input length:</b> {node_data.get('input_length', 0)}",
-        f"<b>Input preview:</b> {node_data.get('input_preview', '—')}",
-        f"<b>Output length:</b> {node_data.get('output_length', 0)}",
-        f"<b>Output preview:</b> {node_data.get('output_preview', '—')}",
+        node_data.get("task_name", "?"),
+        node_data.get("task_description", ""),
+        f"Module: {node_data.get('module_name', '—')}",
+        f"Status: {node_data.get('status', '—')}",
     ]
 
     error_msg = node_data.get("error_message")
     if error_msg:
-        lines += [
-            "─────────────────────",
-            f"<b>Error:</b> {error_msg}",
-        ]
+        lines.append(f"Error: {error_msg}")
 
-    return "<br>".join(lines)
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +239,8 @@ def render_graph_html(
         os.makedirs(output_dir, exist_ok=True)
 
     net = build_pyvis_network(graph)
-    net.write_html(output_path, local=False, notebook=False, open_browser=False)
+    html = net.generate_html(local=False, notebook=False)
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html)
 
     return os.path.abspath(output_path)

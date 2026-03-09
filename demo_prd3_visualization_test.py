@@ -87,7 +87,7 @@ def test_full_pipeline_render():
     out_path = render_graph_html(graph, "output/test1_full_pipeline.html")
 
     assert os.path.exists(out_path), f"HTML file not found: {out_path}"
-    with open(out_path) as f:
+    with open(out_path, encoding="utf-8") as f:
         html = f.read()
     assert len(html) > 1000, "HTML output looks suspiciously small"
     assert "compute_pipeline" in html
@@ -122,7 +122,7 @@ def test_error_node_render():
     out_path = render_graph_html(graph, "output/test2_error_node.html")
 
     assert os.path.exists(out_path)
-    with open(out_path) as f:
+    with open(out_path, encoding="utf-8") as f:
         html = f.read()
     # The error colour hex should appear in the rendered HTML
     assert "#f44336" in html, "Expected error colour #f44336 not found in HTML"
@@ -150,7 +150,7 @@ def test_multi_module_render():
     out_path = render_graph_html(graph, "output/test3_multi_module.html")
 
     assert os.path.exists(out_path)
-    with open(out_path) as f:
+    with open(out_path, encoding="utf-8") as f:
         html = f.read()
     assert "Math Operations" in html
     assert "Text Construction" in html
@@ -175,7 +175,7 @@ def test_repeated_task_render():
     out_path = render_graph_html(graph, "output/test4_repeated_task.html")
 
     assert os.path.exists(out_path)
-    with open(out_path) as f:
+    with open(out_path, encoding="utf-8") as f:
         html = f.read()
     # Both node IDs should appear in the serialized graph data
     assert "add_numbers__0" in html
@@ -215,7 +215,6 @@ def test_helpers():
     assert "Add two numbers" in title
     assert "Math Operations" in title
     assert "success" in title
-    assert "0.0128" in title
 
     # error message included only when present
     assert "Error" not in title
