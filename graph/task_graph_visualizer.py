@@ -1,5 +1,5 @@
 """
-graph/task_graph_visualizer.py — Task graph renderer for Phase 2 (PRD 09).
+graph/task_graph_visualizer.py — Task graph renderer for Phase 2 (PRD 09 / PRD 10).
 
 Overview
 --------
@@ -19,10 +19,12 @@ Design goals
 - Executed path uses solid edges; alternate branch edges are dashed and muted.
 - Status communicated by both fill colour and badge text.
 - Deterministic output: same TaskGraphPayload → same HTML structure.
+- PRD 10: each task graph page includes a back-navigation bar linking to
+  the module overview graph.
 
 Public API
 ----------
-    render_task_graph_html(payload, output_path) -> str
+    render_task_graph_html(payload, output_path, back_link) -> str
         Full pipeline: position nodes, build PyVis network, write HTML,
         return absolute output path.
 
@@ -317,18 +319,95 @@ _TASK_VIS_OPTIONS = """{
 
 
 # ---------------------------------------------------------------------------
+# Back navigation injection (PRD 10)
+# ---------------------------------------------------------------------------
+
+def _inject_back_nav(
+    html_content: str,
+    back_link: str,
+    module_name: str,
+    task_count: int,
+    total_duration_ms: float,
+) -> str:
+    """Inject a back-navigation header bar into the task graph HTML.
+
+    Inserts a styled navigation row above the vis.js graph container.
+    The bar contains a "Back to Module Overview" link on the left and a
+    breadcrumb label on the right showing the current module name.
+
+    Parameters
+    ----------
+    html_content :
+        Raw HTML string produced by PyVis.
+    back_link :
+        Relative URL of the module overview page (e.g. "module_graph.html").
+    module_name :
+        Human-readable module name displayed in the breadcrumb.
+    task_count :
+        Number of executed tasks (shown in the breadcrumb).
+    total_duration_ms :
+        Total module duration (shown in the breadcrumb).
+
+    Returns
+    -------
+    str
+        Modified HTML with the navigation bar injected.
+    """
+    nav_html = (
+        '<div style="'
+        "padding: 10px 20px;"
+        "background: #37474f;"
+        "font-family: Arial, sans-serif;"
+        "display: flex;"
+        "align-items: center;"
+        "gap: 20px;"
+        '">'
+        f'<a href="{back_link}" style="'
+        "color: #80cbc4;"
+        "text-decoration: none;"
+        "font-size: 14px;"
+        "font-weight: 600;"
+        '">'
+        "&#8592; Back to Module Overview"
+        "</a>"
+        '<span style="'
+        "color: #b0bec5;"
+        "font-size: 14px;"
+        '">'
+        f"Task Graph &mdash; {module_name}"
+        f" &nbsp;|&nbsp; {task_count} task(s)"
+        f" &nbsp;|&nbsp; {total_duration_ms:.0f}&thinsp;ms total"
+        "</span>"
+        "</div>\n"
+    )
+
+    # Insert before the graph container div.
+    target = '<div id="mynetwork"'
+    if target in html_content:
+        return html_content.replace(target, nav_html + target, 1)
+    # Fallback: insert at the start of <body>.
+    if "<body>" in html_content:
+        return html_content.replace("<body>", "<body>\n" + nav_html, 1)
+    return nav_html + html_content
+
+
+# ---------------------------------------------------------------------------
 # Main renderer
 # ---------------------------------------------------------------------------
 
 def render_task_graph_html(
     payload: TaskGraphPayload,
     output_path: Optional[str] = None,
+    back_link: str = "module_graph.html",
 ) -> str:
     """Render a module task graph to a standalone HTML file.
 
     Produces a left-to-right process-map view of the tasks inside one
     pipeline module. Each task is a coloured rectangle scaled by duration.
     Alternate branch paths are shown below the main row with dashed edges.
+
+    PRD 10: a navigation bar is injected above the graph with a back link
+    to the module overview page.
 
     Parameters
     ----------
@@ -338,6 +417,9 @@ def render_task_graph_html(
         Destination file path. Defaults to
         "output/task_graph_<module_id>.html".
         Parent directories are created if they do not exist.
+    back_link :
+        Relative URL for the "Back to Module Overview" link.
+        Defaults to "module_graph.html".
 
     Returns
     -------
@@ -431,6 +513,16 @@ def render_task_graph_html(
         )
 
     html_content = net.generate_html(local=False, notebook=False)
+
+    # Inject back-navigation bar (PRD 10).
+    html_content = _inject_back_nav(
+        html_content,
+        back_link=back_link,
+        module_name=payload.module_name,
+        task_count=ctx.get("task_count", 0),
+        total_duration_ms=ctx.get("total_duration_ms", 0.0),
+    )
+
     with open(output_path, "w", encoding="utf-8") as fh:
         fh.write(html_content)
 

@@ -1,5 +1,5 @@
 """
-graph/module_graph_visualizer.py — Module overview graph renderer (PRD 09).
+graph/module_graph_visualizer.py — Module overview graph renderer (PRD 09 / PRD 10).
 
 Overview
 --------
@@ -14,12 +14,14 @@ Design goals
 - Hover tooltip showing input summary, output summary, and duration.
 - Status communicated via both color and badge text.
 - Deterministic output: same module graph → same HTML structure.
+- PRD 10: clicking a module node navigates to its task graph HTML file.
 
 Public API
 ----------
-    render_module_graph_html(module_graph, output_path) -> str
+    render_module_graph_html(module_graph, output_path, task_graph_links) -> str
         Full pipeline: position nodes, build PyVis network, write HTML,
-        return absolute output path.
+        return absolute output path. Injects click-to-navigate JS when
+        task_graph_links are provided or auto-generated from module names.
 
     make_module_node_label(node_data) -> str
         Format the visible in-node text (title, count, badge, duration).
@@ -30,8 +32,10 @@ Public API
 
 from __future__ import annotations
 
+import json
 import os
-from typing import Dict, List, Tuple
+import re
+from typing import Dict, List, Optional, Tuple
 
 import networkx as nx
 from pyvis.network import Network
@@ -123,16 +127,19 @@ def make_module_node_label(node_data: dict) -> str:
     return f"{module_name}\n{task_count} task(s)\n{badge}\n{dur}"
 
 
-def make_module_hover_text(node_data: dict) -> str:
+def make_module_hover_text(node_data: dict, has_task_link: bool = False) -> str:
     """Format the HTML hover tooltip for a module box.
 
     Shows: module name, input summary, output summary, duration.
     Branch flag and module ID are shown as supplementary details.
+    When has_task_link is True, adds a click-to-drill-down hint.
 
     Parameters
     ----------
     node_data :
         Attribute dict of one module node.
+    has_task_link :
+        If True, adds a hint that clicking opens the task graph.
 
     Returns
     -------
@@ -157,6 +164,8 @@ def make_module_hover_text(node_data: dict) -> str:
     ]
     if branch_flag:
         parts.append("<br>⚡ <i>Branch point inside this module</i>")
+    if has_task_link:
+        parts.append("<br><b style='color:#80cbc4'>&#128269; Click to open task graph</b>")
     if module_id:
         parts.append(f"<small style='color:#888'>id: {module_id}</small>")
 
@@ -225,12 +234,101 @@ _MODULE_VIS_OPTIONS = """{
 
 
 # ---------------------------------------------------------------------------
+# Navigation injection helpers (PRD 10)
+# ---------------------------------------------------------------------------
+
+def _build_node_url_map(module_graph: nx.DiGraph) -> Dict[str, str]:
+    """Build a mapping from vis.js node ID to task graph HTML filename.
+
+    Uses module_name from each node to derive the stable slug filename
+    (e.g. "Text Extraction" → "task_graph_text_extraction.html").
+
+    Returns
+    -------
+    dict mapping NetworkX node_id → relative HTML filename
+    """
+    from graph.task_graph_builder import module_name_to_id
+
+    url_map: Dict[str, str] = {}
+    for node_id, node_data in module_graph.nodes(data=True):
+        module_name = node_data.get("module_name", "")
+        if module_name:
+            slug = module_name_to_id(module_name)
+            url_map[node_id] = f"task_graph_{slug}.html"
+    return url_map
+
+
+def _inject_navigation_js(html_content: str, node_url_map: Dict[str, str]) -> str:
+    """Inject a click-handler into the module graph HTML for drill-down navigation.
+
+    Appends JavaScript after the ``drawGraph()`` call so that clicking a
+    module node opens the corresponding task graph HTML file.  The cursor
+    changes to a pointer over nodes to signal that they are clickable.
+
+    Parameters
+    ----------
+    html_content :
+        Raw HTML string produced by PyVis.
+    node_url_map :
+        Mapping of vis.js node ID → relative URL for the task graph page.
+
+    Returns
+    -------
+    str
+        Modified HTML with click-navigation script injected.
+    """
+    mapping_json = json.dumps(node_url_map)
+
+    nav_script = f"""
+<script type="text/javascript">
+  // PRD 10 — drill-down navigation: clicking a module node opens its task graph.
+  (function() {{
+    var nodeUrlMap = {mapping_json};
+
+    // Wait until drawGraph() has run and the network object exists.
+    function attachNavigation() {{
+      if (typeof network === "undefined" || network === null) {{
+        setTimeout(attachNavigation, 100);
+        return;
+      }}
+      network.on("click", function(params) {{
+        if (params.nodes.length > 0) {{
+          var nodeId = String(params.nodes[0]);
+          var url = nodeUrlMap[nodeId];
+          if (url) {{
+            window.location.href = url;
+          }}
+        }}
+      }});
+      network.on("hoverNode", function() {{
+        var canvas = document.querySelector("#mynetwork canvas");
+        if (canvas) canvas.style.cursor = "pointer";
+      }});
+      network.on("blurNode", function() {{
+        var canvas = document.querySelector("#mynetwork canvas");
+        if (canvas) canvas.style.cursor = "default";
+      }});
+    }}
+
+    attachNavigation();
+  }})();
+</script>
+"""
+
+    # Inject before the closing </body> tag so it runs after the page loads.
+    if "</body>" in html_content:
+        return html_content.replace("</body>", nav_script + "\n</body>", 1)
+    return html_content + nav_script
+
+
+# ---------------------------------------------------------------------------
 # Main renderer
 # ---------------------------------------------------------------------------
 
 def render_module_graph_html(
     module_graph: nx.DiGraph,
     output_path: str = "output/module_graph.html",
+    task_graph_links: Optional[Dict[str, str]] = None,
 ) -> str:
     """Render the module overview graph to a standalone HTML file.
 
@@ -238,12 +336,21 @@ def render_module_graph_html(
     Each module is rendered as a coloured rectangular box showing its name,
     task count, status badge, and total duration. Hovering shows I/O summaries.
 
+    PRD 10: clicking a module node navigates to its task graph HTML page.
+    Navigation links are auto-generated from module names unless overridden
+    via the ``task_graph_links`` parameter.
+
     Parameters
     ----------
     module_graph :
         Module overview graph from create_module_graph() (PRD 07).
     output_path :
         Destination file path. Created (with parent dirs) if it does not exist.
+    task_graph_links :
+        Optional mapping of NetworkX node_id → relative HTML filename for the
+        task graph. When None (default), links are auto-generated from module
+        names using the standard slug convention.  Pass an empty dict to
+        disable navigation entirely.
 
     Returns
     -------
@@ -253,6 +360,12 @@ def render_module_graph_html(
     output_dir = os.path.dirname(output_path)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
+
+    # Build node → URL mapping for click navigation.
+    if task_graph_links is None:
+        node_url_map = _build_node_url_map(module_graph)
+    else:
+        node_url_map = task_graph_links
 
     positions = _compute_module_positions(module_graph)
 
@@ -268,12 +381,13 @@ def render_module_graph_html(
 
     # --- Add module nodes ---
     for node_id, node_data in module_graph.nodes(data=True):
-        pos    = positions.get(node_id, {"x": 0, "y": 0})
-        status = node_data.get("status", "unknown")
-        bg     = status_to_color(status)
-        border = status_to_border(status)
-        label  = make_module_node_label(node_data)
-        title  = make_module_hover_text(node_data)
+        pos         = positions.get(node_id, {"x": 0, "y": 0})
+        status      = node_data.get("status", "unknown")
+        bg          = status_to_color(status)
+        border      = status_to_border(status)
+        label       = make_module_node_label(node_data)
+        has_link    = node_id in node_url_map
+        title       = make_module_hover_text(node_data, has_task_link=has_link)
 
         # Add node with minimal positional args; patch everything else below.
         net.add_node(node_id, shape="box", label=label, title=title)
@@ -300,6 +414,11 @@ def render_module_graph_html(
         net.add_edge(src, dst, color={"color": "#546e7a", "inherit": False}, width=2)
 
     html_content = net.generate_html(local=False, notebook=False)
+
+    # Inject click-navigation if we have any links to add.
+    if node_url_map:
+        html_content = _inject_navigation_js(html_content, node_url_map)
+
     with open(output_path, "w", encoding="utf-8") as fh:
         fh.write(html_content)
 
