@@ -256,7 +256,8 @@ def generate_all_graphs(output_dir: str = "output") -> list[str]:
     mod_summary  = module_graph_debug_summary(module_graph)
 
     print(f"    Modules   : {mod_summary['num_modules']}")
-    print(f"    Pipeline  : {' → '.join(mod_summary['pipeline'])}")
+    pipeline_str = ' -> '.join(mod_summary['pipeline'])
+    print(f"    Pipeline  : {pipeline_str}")
     print(f"    Total dur : {mod_summary['total_duration_ms']:.0f} ms")
     print()
     print("    Module breakdown:")
@@ -290,6 +291,10 @@ def generate_all_graphs(output_dir: str = "output") -> list[str]:
     module_nodes = list_module_nodes(module_graph)
 
     for mod in module_nodes:
+        # Skip decision nodes they have no tasks to drill into
+        if mod.get("is_decision_node"):
+            continue
+
         module_name = mod["module_name"]
         module_slug = module_name_to_id(module_name)
         out_path    = f"{output_dir}/task_graph_{module_slug}.html"
@@ -300,14 +305,14 @@ def generate_all_graphs(output_dir: str = "output") -> list[str]:
         summary = task_graph_debug_summary(payload)
         ctx     = payload.context
 
-        print(f"    Tasks  : {' → '.join(summary['task_flow'])}")
+        print(f"    Tasks  : {' -> '.join(summary['task_flow'])}")
         print(f"    Dur    : {ctx['total_duration_ms']:.0f} ms")
 
         if summary["branch_edges"]:
             for be in summary["branch_edges"]:
                 taken = "TAKEN" if be["branch_taken"] else "alternate"
                 print(
-                    f"    Branch : {be['from_node']} → {be['to_node']}"
+                    f"    Branch : {be['from_node']} -> {be['to_node']}"
                     f"  [{be['branch_group']} / {be['branch_option']} ({taken})]"
                 )
 
@@ -332,7 +337,7 @@ def generate_all_graphs(output_dir: str = "output") -> list[str]:
     print("  Navigation:")
     print("    1. Open module_graph.html in your browser")
     print("    2. Click any module node to open its task graph")
-    print("    3. Click '← Back to Module Overview' to return")
+    print("    3. Click '< Back to Module Overview' to return")
     print(sep)
 
     return generated_paths

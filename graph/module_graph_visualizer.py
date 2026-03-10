@@ -136,6 +136,7 @@ def make_module_hover_text(node_data: dict, has_task_link: bool = False) -> str:
     """Format the hover tooltip for a module box.
 
     Shows: module name, input summary, output summary, duration, task count.
+    For decision nodes, shows placeholder values since they don't execute tasks.
     Uses plain text with newlines for reliable rendering across vis.js versions.
 
     Parameters
@@ -151,10 +152,20 @@ def make_module_hover_text(node_data: dict, has_task_link: bool = False) -> str:
         Plain text string with newlines (no HTML tags for maximum compatibility).
     """
     module_name    = node_data.get("module_name", "?")
-    input_summary  = node_data.get("input_summary",  "") or "—"
-    output_summary = node_data.get("output_summary", "") or "—"
-    duration_ms    = node_data.get("total_duration_ms", 0.0)
-    task_count     = node_data.get("task_count", 0)
+    is_decision    = node_data.get("is_decision_node", False)
+    
+    # Decision nodes show placeholder values
+    if is_decision:
+        input_summary  = "[Decision point — no tasks]"
+        output_summary = "[Routes pipeline based on logic]"
+        duration_ms    = 0.0
+        task_count     = 0
+    else:
+        input_summary  = node_data.get("input_summary",  "") or "[Coming from previous module]"
+        output_summary = node_data.get("output_summary", "") or "[Passing to next module]"
+        duration_ms    = node_data.get("total_duration_ms", 0.0)
+        task_count     = node_data.get("task_count", 0)
+    
     branch_flag    = node_data.get("branch_detected", False)
 
     parts = [
@@ -165,9 +176,11 @@ def make_module_hover_text(node_data: dict, has_task_link: bool = False) -> str:
         f"⏱  DURATION: {duration_ms:.0f} ms",
         f"📋 TASKS:    {task_count}",
     ]
-    if branch_flag:
+    if branch_flag and not is_decision:
         parts.append("⚡ Branch point inside this module")
-    if has_task_link:
+    if is_decision:
+        parts.append("🔀 Routing decision node")
+    if has_task_link and not is_decision:
         parts.append("→ Click to open task graph")
 
     return "\n".join(parts)
@@ -243,6 +256,8 @@ def _build_node_url_map(module_graph: nx.DiGraph) -> Dict[str, str]:
 
     Uses module_name from each node to derive the stable slug filename
     (e.g. "Text Extraction" → "task_graph_text_extraction.html").
+    
+    Excludes decision nodes (is_decision_node=True) since they have no tasks.
 
     Returns
     -------
@@ -252,6 +267,10 @@ def _build_node_url_map(module_graph: nx.DiGraph) -> Dict[str, str]:
 
     url_map: Dict[str, str] = {}
     for node_id, node_data in module_graph.nodes(data=True):
+        # Skip decision nodes — they have no task graph to drill into
+        if node_data.get("is_decision_node"):
+            continue
+            
         module_name = node_data.get("module_name", "")
         if module_name:
             slug = module_name_to_id(module_name)
@@ -535,22 +554,41 @@ def render_module_graph_html(
         bg          = status_to_color(status)
         border      = status_to_border(status)
         label       = make_module_node_label(node_data)
-        has_link    = node_id in node_url_map
+        
+        # Decision nodes should not be clickable (no task graph)
+        is_decision = node_data.get("is_decision_node", False)
+        has_link    = (node_id in node_url_map) and (not is_decision)
         title       = make_module_hover_text(node_data, has_task_link=has_link)
+        
+        # Decision nodes get a slightly different visual treatment (diamond-like or lighter)
+        shape = "diamond" if is_decision else "box"
 
         # Add node with minimal positional args; patch everything else below.
-        net.add_node(node_id, shape="box", label=label, title=title)
+        net.add_node(node_id, shape=shape, label=label, title=title)
 
         n = net.node_map[node_id]
         n["x"]      = pos["x"]
         n["y"]      = pos["y"]
         n["physics"] = False     # pin this node so physics cannot move it
-        n["color"]  = {
-            "background": bg,
-            "border":     border,
-            "highlight":  {"background": bg, "border": "#212121"},
-            "hover":      {"background": bg, "border": "#212121"},
-        }
+        
+        # Decision nodes get a different visual appearance
+        if is_decision:
+            decision_color = "#ffc107"  # amber/yellow
+            decision_border = "#f57f17"
+            n["color"] = {
+                "background": decision_color,
+                "border":     decision_border,
+                "highlight":  {"background": decision_color, "border": "#212121"},
+                "hover":      {"background": decision_color, "border": "#212121"},
+            }
+        else:
+            n["color"] = {
+                "background": bg,
+                "border":     border,
+                "highlight":  {"background": bg, "border": "#212121"},
+                "hover":      {"background": bg, "border": "#212121"},
+            }
+        
         n["font"] = {
             "color": "#ffffff",
             "size":  14,
@@ -559,7 +597,7 @@ def render_module_graph_html(
         n["widthConstraint"] = {"minimum": 190, "maximum": 220}
 
     # --- Add pipeline edges with data flow labels ---
-    for src, dst, _edge_data in module_graph.edges(data=True):
+    for src, dst, edge_data in module_graph.edges(data=True):
         # Get source module's output to show data flow.
         src_node = module_graph.nodes[src]
         output_label = src_node.get("output_summary", "")
@@ -567,13 +605,48 @@ def render_module_graph_html(
             output_label = output_label[:32] + "…"
 
         edge_label = output_label if output_label else ""
+        
+        # Check if this is a branch edge
+        edge_type = edge_data.get("edge_type", "pipeline")
+        is_branch = edge_type == "branch"
+        branch_taken = edge_data.get("branch_taken", False)
+        branch_label = edge_data.get("branch_label", "")
+        
+        # Style edges based on type and whether they were taken
+        if is_branch:
+            if branch_taken:
+                # Taken branch: solid, visible color
+                edge_color = "#2e7d32"  # darker green
+                edge_width = 3
+                edge_style = "solid"
+                smooth_type = "curvedCW"  # Curve clockwise for taken path
+                # Add branch label to edge
+                if branch_label:
+                    edge_label = branch_label + " (taken)"
+            else:
+                # Alternate branch: dotted, faded color
+                edge_color = "#b0bec5"  # light grey-blue
+                edge_width = 2
+                edge_style = "dotted"
+                smooth_type = "curvedCCW"  # Curve counter-clockwise for alternate path
+                # Add branch label to edge
+                if branch_label:
+                    edge_label = branch_label + " (alternate)"
+        else:
+            # Pipeline edges: standard style
+            edge_color = "#546e7a"  # standard blue-grey
+            edge_width = 2
+            edge_style = "solid"
+            smooth_type = "straight"
 
         net.add_edge(
             src, dst,
-            color={"color": "#546e7a", "inherit": False},
-            width=2,
+            color={"color": edge_color, "inherit": False},
+            width=edge_width,
             label=edge_label,
-            font={"size": 11, "color": "#546e7a", "align": "middle"},
+            font={"size": 11, "color": edge_color, "align": "middle"},
+            dashes=True if edge_style == "dotted" else False,
+            smooth={"type": smooth_type},
         )
 
     html_content = net.generate_html(local=False, notebook=False)

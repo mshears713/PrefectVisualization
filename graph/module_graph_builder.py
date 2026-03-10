@@ -277,10 +277,16 @@ def build_module_edges(module_graph: nx.DiGraph) -> None:
 
         PDF Ingestion → Text Extraction → Text Processing → …
 
+    For document size decision branching (Text Processing → Chunking):
+    - Insert a conceptual "Document Size Decision" node
+    - Create two outgoing edges: one to LLM Analysis (small doc), one to Chunking (large doc)
+    - The large doc path (through Chunking) is marked as branch_taken=true
+
     Guarantees:
     - No duplicate edges (checked with has_edge before adding).
     - Deterministic ordering (sorted on stage_index, then module_name as
       tiebreaker so behavior is stable even if two stages share an index).
+    - Branching structure is preserved for visualization.
 
     Parameters
     ----------
@@ -292,15 +298,120 @@ def build_module_edges(module_graph: nx.DiGraph) -> None:
         key=lambda item: (item[1].get("stage_index", 999), item[1].get("module_name", "")),
     )
 
-    for i in range(len(ordered) - 1):
-        from_id = ordered[i][0]
-        to_id = ordered[i + 1][0]
+    # Build initial edge list, detecting the Text Processing → Chunking transition
+    edges_to_add = []
+    text_processing_idx = None
+    chunking_idx = None
+    lllm_analysis_idx = None
+
+    for i, (node_id, data) in enumerate(ordered):
+        module_name = data.get("module_name", "")
+        if module_name == "Text Processing":
+            text_processing_idx = i
+        elif module_name == "Chunking":
+            chunking_idx = i
+        elif module_name == "LLM Analysis":
+            lllm_analysis_idx = i
+
+    # If we have Text Processing → Chunking → LLM Analysis, inject decision node
+    if (
+        text_processing_idx is not None
+        and chunking_idx is not None
+        and text_processing_idx + 1 == chunking_idx
+        and lllm_analysis_idx is not None
+    ):
+        # Add document size decision node
+        decision_node_id = "decision__document_size"
+        module_graph.add_node(
+            decision_node_id,
+            # --- Identity ---
+            module_id=decision_node_id,
+            module_name="Document Size Decision",
+            module_description="Routing decision: document size",
+            # --- Ordering (fractional between Text Processing and Chunking) ---
+            stage_index=2.5,  # Between stage 2 (Text Processing) and stage 3 (Chunking)
+            # --- Status/Metadata ---
+            status="success",
+            total_duration_ms=0.0,
+            input_summary="",
+            output_summary="",
+            task_ids=[],
+            task_count=0,
+            # --- Decision node marker ---
+            is_decision_node=True,
+            branch_detected=True,
+        )
+
+        # Build edge list with branching
+        for i in range(len(ordered) - 1):
+            from_id = ordered[i][0]
+            to_id = ordered[i + 1][0]
+            from_data = ordered[i][1]
+            to_data = ordered[i + 1][1]
+            from_name = from_data.get("module_name", "")
+            to_name = to_data.get("module_name", "")
+
+            # Text Processing → Document Size Decision
+            if from_name == "Text Processing" and to_name == "Chunking":
+                edges_to_add.append({
+                    "from_id": from_id,
+                    "to_id": decision_node_id,
+                    "edge_type": "pipeline",
+                })
+                # Document Size Decision → LLM Analysis (small doc, not taken)
+                edges_to_add.append({
+                    "from_id": decision_node_id,
+                    "to_id": ordered[lllm_analysis_idx][0],
+                    "edge_type": "branch",
+                    "branch_type": "size_decision",
+                    "branch_label": "small_doc",
+                    "branch_taken": False,
+                })
+                # Document Size Decision → Chunking (large doc, taken)
+                edges_to_add.append({
+                    "from_id": decision_node_id,
+                    "to_id": to_id,
+                    "edge_type": "branch",
+                    "branch_type": "size_decision",
+                    "branch_label": "large_doc",
+                    "branch_taken": True,
+                })
+            # Chunking → LLM Analysis (already routed via decision, skip in linear loop)
+            elif from_name == "Chunking" and to_name == "LLM Analysis":
+                # This edge will be added separately to maintain the large-doc path
+                edges_to_add.append({
+                    "from_id": from_id,
+                    "to_id": to_id,
+                    "edge_type": "branch",
+                    "branch_type": "size_decision",
+                    "branch_label": "large_doc",
+                    "branch_taken": True,
+                })
+            # All other consecutive module pairs
+            else:
+                edges_to_add.append({
+                    "from_id": from_id,
+                    "to_id": to_id,
+                    "edge_type": "pipeline",
+                })
+
+    else:
+        # No branching detected; use original linear logic
+        for i in range(len(ordered) - 1):
+            from_id = ordered[i][0]
+            to_id = ordered[i + 1][0]
+            edges_to_add.append({
+                "from_id": from_id,
+                "to_id": to_id,
+                "edge_type": "pipeline",
+            })
+
+    # Add all edges to the graph
+    for edge_spec in edges_to_add:
+        from_id = edge_spec.pop("from_id")
+        to_id = edge_spec.pop("to_id")
         if not module_graph.has_edge(from_id, to_id):
-            module_graph.add_edge(
-                from_id,
-                to_id,
-                edge_type="pipeline",
-            )
+            module_graph.add_edge(from_id, to_id, **edge_spec)
 
 
 # ---------------------------------------------------------------------------
