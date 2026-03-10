@@ -581,6 +581,11 @@ def render_module_graph_html(
                 "highlight":  {"background": decision_color, "border": "#212121"},
                 "hover":      {"background": decision_color, "border": "#212121"},
             }
+            n["font"] = {
+                "color": "#000000",  # Black text for decision nodes (yellow background)
+                "size":  14,
+                "face":  "Arial",
+            }
         else:
             n["color"] = {
                 "background": bg,
@@ -588,12 +593,11 @@ def render_module_graph_html(
                 "highlight":  {"background": bg, "border": "#212121"},
                 "hover":      {"background": bg, "border": "#212121"},
             }
-        
-        n["font"] = {
-            "color": "#ffffff",
-            "size":  14,
-            "face":  "Arial",
-        }
+            n["font"] = {
+                "color": "#ffffff",  # White text for other nodes
+                "size":  14,
+                "face":  "Arial",
+            }
         n["widthConstraint"] = {"minimum": 190, "maximum": 220}
 
     # --- Add pipeline edges with data flow labels ---

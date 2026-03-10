@@ -156,15 +156,39 @@
         
         <div class="description">
             <p>This demo showcases <strong>runtime execution pipelines</strong> captured using Python decorators. Each visualization displays how functions execute, the flow of data between modules, and execution timing.</p>
+            <p style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #e0e0e0;"><strong>Two scenarios:</strong></p>
+            <ul style="margin-top: 8px; margin-left: 16px;">
+                <li><strong>✓ Success Scenario</strong> — All modules execute successfully</li>
+                <li><strong>⚠️ Errors & Warnings Scenario</strong> — Shows warnings, failures, and cascading error propagation</li>
+            </ul>
         </div>
         
         <div class="section">
-            <h2>📊 Main Visualizations</h2>
+            <h2>📊 Scenario: Successful Execution</h2>
+            <div class="description" style="margin-bottom: 16px; background: #e8f5e9; border-left-color: #4caf50;">
+                ✓ All modules execute successfully with expected performance
+            </div>
             <div class="links-grid">
                 <a href="module_graph.html" class="link-button">
                     <span>
-                        <div class="link-title">Pipeline Module Graph</div>
-                        <div style="font-size: 12px; color: #999; margin-top: 4px;">High-level module overview</div>
+                        <div class="link-title">Pipeline Module Graph (Success)</div>
+                        <div style="font-size: 12px; color: #999; margin-top: 4px;">All green — nominal execution</div>
+                    </span>
+                    <span class="link-icon">→</span>
+                </a>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>⚠️ Scenario: Warnings & Errors</h2>
+            <div class="description" style="margin-bottom: 16px; background: #fff3e0; border-left-color: #ff9800;">
+                ⚠ Text Extraction has performance warning • ✖ Chunking fails • 🔴 Cascade failures downstream
+            </div>
+            <div class="links-grid">
+                <a href="module_graph_with_errors.html" class="link-button">
+                    <span>
+                        <div class="link-title">Pipeline Module Graph (With Errors)</div>
+                        <div style="font-size: 12px; color: #999; margin-top: 4px;">Yellow warning on extraction, red errors on chunking & downstream</div>
                     </span>
                     <span class="link-icon">→</span>
                 </a>
@@ -172,7 +196,7 @@
         </div>
         
         <div class="section">
-            <h2>🔎 Detailed Task Graphs</h2>
+            <h2>🔎 Task Graphs — Success Scenario</h2>
             <div class="links-grid">
                 <a href="task_graph_pdf_ingestion.html" class="link-button">
                     <span>
@@ -213,6 +237,40 @@
                     <span>
                         <div class="link-title">Structured Output Tasks</div>
                         <div style="font-size: 12px; color: #999; margin-top: 4px;">Result formatting & export</div>
+                    </span>
+                    <span class="link-icon">→</span>
+                </a>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>🔎 Task Graphs — Errors & Warnings Scenario</h2>
+            <div class="links-grid">
+                <a href="task_graph_text_extraction_warned.html" class="link-button">
+                    <span>
+                        <div class="link-title">Text Extraction Tasks ⚠️ Warning</div>
+                        <div style="font-size: 12px; color: #999; margin-top: 4px;">Extract text took too long</div>
+                    </span>
+                    <span class="link-icon">→</span>
+                </a>
+                <a href="task_graph_chunking_error.html" class="link-button">
+                    <span>
+                        <div class="link-title">Chunking Tasks ✖ Failed</div>
+                        <div style="font-size: 12px; color: #999; margin-top: 4px;">split_into_chunks error</div>
+                    </span>
+                    <span class="link-icon">→</span>
+                </a>
+                <a href="task_graph_llm_analysis_error.html" class="link-button">
+                    <span>
+                        <div class="link-title">LLM Analysis Tasks ✖ Failed</div>
+                        <div style="font-size: 12px; color: #999; margin-top: 4px;">Cascading failure from chunking</div>
+                    </span>
+                    <span class="link-icon">→</span>
+                </a>
+                <a href="task_graph_structured_output_error.html" class="link-button">
+                    <span>
+                        <div class="link-title">Structured Output Tasks ✖ Failed</div>
+                        <div style="font-size: 12px; color: #999; margin-top: 4px;">Cascading failure from LLM</div>
                     </span>
                     <span class="link-icon">→</span>
                 </a>
